@@ -4,8 +4,9 @@ import { HomePage } from "@/components/home/HomePage"
 import { OnboardingPage } from "@/components/onboarding/OnboardingPage"
 import { SignupPage } from "@/components/auth/SignupPage"
 import { LoginPage } from "@/components/auth/LoginPage"
+import { CloningPage } from "@/components/cloning"
 
-type AppView = "signup" | "login" | "onboarding" | "home"
+type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "history" | "settings" | "upgrade"
 
 function App() {
   const [currentView, setCurrentView] = useState<AppView>("signup")
@@ -35,10 +36,44 @@ function App() {
     return <OnboardingPage onComplete={() => setCurrentView("home")} />
   }
 
-  // Main app
+  // Render page content based on current view
+  const renderPageContent = () => {
+    switch (currentView) {
+      case "cloning":
+        return <CloningPage />
+      case "history":
+        return (
+          <div className="text-white">
+            <h1 className="text-2xl font-semibold mb-4">Histórico</h1>
+            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
+          </div>
+        )
+      case "settings":
+        return (
+          <div className="text-white">
+            <h1 className="text-2xl font-semibold mb-4">Configurações</h1>
+            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
+          </div>
+        )
+      case "upgrade":
+        return (
+          <div className="text-white">
+            <h1 className="text-2xl font-semibold mb-4">Upgrade para PRO</h1>
+            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
+          </div>
+        )
+      default:
+        return <HomePage />
+    }
+  }
+
+  // Main app with navigation
   return (
-    <MainLayout>
-      <HomePage />
+    <MainLayout
+      activePage={currentView}
+      onNavigate={(page) => setCurrentView(page as AppView)}
+    >
+      {renderPageContent()}
     </MainLayout>
   )
 }

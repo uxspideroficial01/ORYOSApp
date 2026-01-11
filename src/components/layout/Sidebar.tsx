@@ -3,18 +3,22 @@ import { Sun } from "lucide-react"
 
 interface NavItem {
   label: string
-  href: string
-  active?: boolean
+  id: string
 }
 
 const navItems: NavItem[] = [
-  { label: "Create", href: "/", active: true },
-  { label: "Cloning", href: "/cloning" },
-  { label: "History", href: "/history" },
-  { label: "Settings", href: "/settings" },
+  { label: "Create", id: "home" },
+  { label: "Cloning", id: "cloning" },
+  { label: "History", id: "history" },
+  { label: "Settings", id: "settings" },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  activePage: string
+  onNavigate: (page: string) => void
+}
+
+export function Sidebar({ activePage, onNavigate }: SidebarProps) {
   return (
     <aside className="flex flex-col justify-center h-full w-[120px] py-8 px-5">
       {/* Logo */}
@@ -28,17 +32,17 @@ export function Sidebar() {
       <nav className="flex flex-col gap-3">
         {navItems.map((item, index) => (
           <div key={item.label} className="flex flex-col gap-3">
-            <a
-              href={item.href}
+            <button
+              onClick={() => onNavigate(item.id)}
               className={cn(
-                "text-base transition-colors",
-                item.active
+                "text-base transition-colors text-left",
+                activePage === item.id
                   ? "text-white font-medium"
                   : "text-[var(--oryos-text-muted)] hover:text-white"
               )}
             >
               {item.label}
-            </a>
+            </button>
             {index < navItems.length - 1 && (
               <div className="w-[26px] h-px bg-[var(--oryos-separator-dark)]" />
             )}
@@ -48,12 +52,12 @@ export function Sidebar() {
         <div className="w-[26px] h-px bg-[var(--oryos-separator-dark)]" />
 
         {/* PRO Badge */}
-        <a
-          href="/upgrade"
-          className="text-base font-bold text-[var(--oryos-text-muted)] hover:text-white transition-colors"
+        <button
+          onClick={() => onNavigate("upgrade")}
+          className="text-base font-bold text-[var(--oryos-text-muted)] hover:text-white transition-colors text-left"
         >
           PRO
-        </a>
+        </button>
       </nav>
 
       {/* Theme Toggle */}
