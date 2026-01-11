@@ -5,8 +5,10 @@ import { OnboardingPage } from "@/components/onboarding/OnboardingPage"
 import { SignupPage } from "@/components/auth/SignupPage"
 import { LoginPage } from "@/components/auth/LoginPage"
 import { CloningPage } from "@/components/cloning"
+import { TrainedStylesPage } from "@/components/styles"
+import { UpgradePage } from "@/components/upgrade"
 
-type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "history" | "settings" | "upgrade"
+type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "styles" | "history" | "settings" | "upgrade"
 
 function App() {
   const [currentView, setCurrentView] = useState<AppView>("signup")
@@ -41,6 +43,8 @@ function App() {
     switch (currentView) {
       case "cloning":
         return <CloningPage />
+      case "styles":
+        return <TrainedStylesPage onNavigateToCloning={() => setCurrentView("cloning")} />
       case "history":
         return (
           <div className="text-white">
@@ -56,12 +60,7 @@ function App() {
           </div>
         )
       case "upgrade":
-        return (
-          <div className="text-white">
-            <h1 className="text-2xl font-semibold mb-4">Upgrade para PRO</h1>
-            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
-          </div>
-        )
+        return <UpgradePage />
       default:
         return <HomePage />
     }
