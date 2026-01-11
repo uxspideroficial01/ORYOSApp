@@ -7,6 +7,8 @@ import { LoginPage } from "@/components/auth/LoginPage"
 import { CloningPage } from "@/components/cloning"
 import { TrainedStylesPage } from "@/components/styles"
 import { UpgradePage } from "@/components/upgrade"
+import { HistoryPage } from "@/components/history"
+import { SettingsPage } from "@/components/settings"
 
 type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "styles" | "history" | "settings" | "upgrade"
 
@@ -46,19 +48,9 @@ function App() {
       case "styles":
         return <TrainedStylesPage onNavigateToCloning={() => setCurrentView("cloning")} />
       case "history":
-        return (
-          <div className="text-white">
-            <h1 className="text-2xl font-semibold mb-4">Histórico</h1>
-            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
-          </div>
-        )
+        return <HistoryPage />
       case "settings":
-        return (
-          <div className="text-white">
-            <h1 className="text-2xl font-semibold mb-4">Configurações</h1>
-            <p className="text-[var(--oryos-text-description)]">Em breve...</p>
-          </div>
-        )
+        return <SettingsPage />
       case "upgrade":
         return <UpgradePage />
       default:
