@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(gh auth status:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: ORYOS 2.0 - AI Script Generator\n\n- React + TypeScript + Vite setup\n- Tailwind CSS with custom ORYOS design tokens\n- shadcn/ui inspired components \\(Button, Input, Select, Switch, Card\\)\n- Home page with Create Script form\n- Vertical sidebar navigation\n- Script Generated panel with modern card design\n- Pill-shaped inputs and buttons\n- Dark theme with black background\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
