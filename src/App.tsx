@@ -9,8 +9,9 @@ import { TrainedStylesPage } from "@/components/styles"
 import { UpgradePage } from "@/components/upgrade"
 import { HistoryPage } from "@/components/history"
 import { SettingsPage } from "@/components/settings"
+import { ChannelAnalyticsPage } from "@/components/analytics"
 
-type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "styles" | "history" | "settings" | "upgrade"
+type AppView = "signup" | "login" | "onboarding" | "home" | "cloning" | "styles" | "history" | "settings" | "upgrade" | "analytics"
 
 function App() {
   const [currentView, setCurrentView] = useState<AppView>("signup")
@@ -53,6 +54,8 @@ function App() {
         return <SettingsPage />
       case "upgrade":
         return <UpgradePage />
+      case "analytics":
+        return <ChannelAnalyticsPage />
       default:
         return <HomePage />
     }
