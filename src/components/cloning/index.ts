@@ -1,3 +1,5 @@
-export { CloningPage } from "./CloningPage"
-export { VideoUploadCard } from "./VideoUploadCard"
-export { TipsPanel } from "./TipsPanel"
+export { NewCloningPage as CloningPage } from "./NewCloningPage"
+export { VideoInputCard } from "./VideoInputCard"
+export { CloningTips } from "./CloningTips"
+export { CreatorProfileView } from "./CreatorProfileView"
+export { ScriptGenerator } from "./ScriptGenerator"
