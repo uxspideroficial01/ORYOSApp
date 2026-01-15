@@ -236,20 +236,7 @@ export interface UserUsage {
 // TIPOS DE REQUEST/RESPONSE DAS EDGE FUNCTIONS
 // ============================================
 
-// fetch-channel-videos
-export interface FetchChannelRequest {
-  channel_url: string;
-  max_videos?: number;
-}
-
-export interface FetchChannelResponse {
-  success: boolean;
-  channel: YouTubeChannel;
-  videos: YouTubeVideo[];
-  total_videos: number;
-}
-
-// extract-transcript
+// extract-transcript (TranscriptAPI)
 export interface ExtractTranscriptRequest {
   video_url?: string;
   video_id?: string;

@@ -3,8 +3,6 @@
 
 import { supabase } from './supabase';
 import type {
-  FetchChannelRequest,
-  FetchChannelResponse,
   ExtractTranscriptRequest,
   ExtractTranscriptResponse,
   AnalyzeCreatorRequest,
@@ -19,8 +17,6 @@ import type {
 // ============================================
 // CONFIGURACAO
 // ============================================
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 async function callEdgeFunction<T>(
   functionName: string,
@@ -42,36 +38,22 @@ async function callEdgeFunction<T>(
 }
 
 // ============================================
-// YOUTUBE / CANAL
-// ============================================
-
-export async function fetchChannelVideos(
-  channelUrl: string,
-  maxVideos: number = 20
-): Promise<FetchChannelResponse> {
-  return callEdgeFunction<FetchChannelResponse>('fetch-channel-videos', {
-    channel_url: channelUrl,
-    max_videos: maxVideos,
-  });
-}
-
-// ============================================
-// TRANSCRICAO
+// TRANSCRICAO (TranscriptAPI)
 // ============================================
 
 export async function extractTranscript(
-  videoId: string
+  videoUrl: string
 ): Promise<ExtractTranscriptResponse> {
   return callEdgeFunction<ExtractTranscriptResponse>('extract-transcript', {
-    video_id: videoId,
+    video_url: videoUrl,
   });
 }
 
 export async function extractMultipleTranscripts(
-  videoIds: string[]
+  videoUrls: string[]
 ): Promise<ExtractTranscriptResponse> {
   return callEdgeFunction<ExtractTranscriptResponse>('extract-transcript', {
-    video_ids: videoIds,
+    video_urls: videoUrls,
   });
 }
 
@@ -355,16 +337,18 @@ export async function checkUsageLimit(
 // ============================================
 
 export interface CloneCreatorOptions {
-  channelUrl: string;
-  selectedVideoIds: string[];
+  creatorName: string;
+  videoUrls: string[];
   styleName: string;
+  channelUrl?: string;
+  avatarUrl?: string;
   onProgress?: (step: string, progress: number) => void;
 }
 
 export async function cloneCreatorStyle(
   options: CloneCreatorOptions
 ): Promise<Creator> {
-  const { channelUrl, selectedVideoIds, styleName, onProgress } = options;
+  const { creatorName, videoUrls, styleName, channelUrl, avatarUrl, onProgress } = options;
 
   // 1. Verificar limite
   const limitCheck = await checkUsageLimit('analyses');
@@ -374,18 +358,21 @@ export async function cloneCreatorStyle(
     );
   }
 
-  onProgress?.('Buscando informacoes do canal...', 10);
+  if (videoUrls.length < 3) {
+    throw new Error('Minimo de 3 videos necessarios para analise de estilo');
+  }
 
-  // 2. Buscar info do canal
-  const channelData = await fetchChannelVideos(channelUrl, 1);
+  if (videoUrls.length > 10) {
+    throw new Error('Maximo de 10 videos por analise');
+  }
 
-  onProgress?.('Extraindo transcricoes...', 20);
+  onProgress?.('Extraindo transcricoes...', 10);
 
-  // 3. Extrair transcricoes
-  const transcriptData = await extractMultipleTranscripts(selectedVideoIds);
+  // 2. Extrair transcricoes via TranscriptAPI
+  const transcriptData = await extractMultipleTranscripts(videoUrls);
 
   if (!transcriptData.results || transcriptData.results.length === 0) {
-    throw new Error('Nao foi possivel extrair transcricoes dos videos selecionados');
+    throw new Error('Nao foi possivel extrair transcricoes dos videos');
   }
 
   const transcripts = transcriptData.results
@@ -393,31 +380,31 @@ export async function cloneCreatorStyle(
     .map(r => r.transcript);
 
   if (transcripts.length < 3) {
-    throw new Error('Minimo de 3 transcricoes necessarias para analise');
+    throw new Error(`Apenas ${transcripts.length} transcricoes extraidas. Minimo de 3 necessarias.`);
   }
 
-  onProgress?.('Analisando estilo do creator...', 50);
+  onProgress?.(`${transcripts.length} transcricoes extraidas. Analisando estilo...`, 40);
 
-  // 4. Analisar com IA
-  const analysisData = await analyzeCreator(channelData.channel.name, transcripts);
+  // 3. Analisar com Claude Opus
+  const analysisData = await analyzeCreator(creatorName, transcripts);
 
-  onProgress?.('Salvando estilo...', 90);
+  onProgress?.('Salvando estilo...', 80);
 
-  // 5. Salvar no banco
+  // 4. Salvar no banco
   const creator = await saveCreator({
-    channel_id: channelData.channel.id,
-    channel_name: channelData.channel.name,
-    channel_url: channelData.channel.url,
-    avatar_url: channelData.channel.avatar_url,
-    subscriber_count: channelData.channel.subscriber_count,
+    channel_id: null,
+    channel_name: creatorName,
+    channel_url: channelUrl || null,
+    avatar_url: avatarUrl || null,
+    subscriber_count: null,
     style_name: styleName,
-    video_ids: selectedVideoIds,
+    video_ids: videoUrls,
     total_videos_analyzed: transcripts.length,
     analysis: analysisData.analysis,
     prompt_template: analysisData.prompt_template,
   });
 
-  // 6. Incrementar uso
+  // 5. Incrementar uso
   await incrementUsage('analyses');
 
   onProgress?.('Concluido!', 100);
@@ -456,7 +443,7 @@ export async function generateScriptWithCreator(
     throw new Error('Estilo nao encontrado');
   }
 
-  // 3. Gerar roteiro
+  // 3. Gerar roteiro com Claude Sonnet
   const scriptData = await generateScript({
     topic,
     prompt_template: creator.prompt_template,

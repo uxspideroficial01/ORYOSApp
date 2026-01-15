@@ -1,18 +1,31 @@
 // supabase/functions/extract-transcript/index.ts
-// Extrai transcricao de video do YouTube usando Piped API (gratis)
+// Extrai transcricao de video do YouTube usando TranscriptAPI ($5/mes - 1000 creditos)
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-// Instancias Piped disponiveis (fallback se uma cair)
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.in.projectsegfau.lt',
-]
+const TRANSCRIPT_API_URL = 'https://transcriptapi.com/api/v2/youtube/transcript'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface TranscriptSegment {
+  text: string
+  start?: number
+  duration?: number
+}
+
+interface TranscriptAPIResponse {
+  video_id: string
+  language: string
+  transcript: TranscriptSegment[]
+  metadata?: {
+    title: string
+    author_name: string
+    author_url: string
+    thumbnail_url: string
+  }
 }
 
 interface TranscriptResponse {
@@ -24,7 +37,6 @@ interface TranscriptResponse {
   transcript: string
   word_count: number
   language?: string
-  duration_seconds?: number
 }
 
 // Extrai video ID de diferentes formatos de URL
@@ -48,171 +60,67 @@ function extractVideoId(url: string): string | null {
   return null
 }
 
-// Tenta fetch em multiplas instancias Piped
-async function fetchWithFallback(path: string): Promise<Response> {
-  let lastError: Error | null = null
+async function fetchTranscript(videoId: string): Promise<TranscriptResponse> {
+  const apiKey = Deno.env.get('TRANSCRIPT_API_KEY')
 
-  for (const instance of PIPED_INSTANCES) {
-    try {
-      const response = await fetch(`${instance}${path}`, {
-        headers: { 'User-Agent': 'ORYOS/1.0' },
-      })
-
-      if (response.ok) {
-        return response
-      }
-
-      // Se for 404, nao adianta tentar outra instancia
-      if (response.status === 404) {
-        throw new Error('Video nao encontrado')
-      }
-    } catch (error) {
-      lastError = error
-      console.log(`Instancia ${instance} falhou, tentando proxima...`)
-    }
+  if (!apiKey) {
+    throw new Error('TRANSCRIPT_API_KEY nao configurada')
   }
 
-  throw lastError || new Error('Todas as instancias Piped falharam')
-}
+  // Construir URL com parametros
+  const url = new URL(TRANSCRIPT_API_URL)
+  url.searchParams.set('video_url', `https://youtube.com/watch?v=${videoId}`)
+  url.searchParams.set('format', 'json')
+  url.searchParams.set('include_timestamp', 'false')
+  url.searchParams.set('send_metadata', 'true')
 
-// Parseia legendas VTT/TTML para texto limpo
-function parseSubtitles(content: string, format: string): string {
-  let text = ''
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  })
 
-  if (format === 'vtt' || content.includes('WEBVTT')) {
-    // Formato VTT
-    const lines = content.split('\n')
-    for (const line of lines) {
-      // Pula headers, timestamps e linhas vazias
-      if (
-        line.startsWith('WEBVTT') ||
-        line.startsWith('Kind:') ||
-        line.startsWith('Language:') ||
-        line.includes('-->') ||
-        line.match(/^\d+$/) ||
-        line.trim() === ''
-      ) {
-        continue
-      }
-      // Remove tags HTML/VTT
-      const cleanLine = line
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .trim()
+  if (!response.ok) {
+    const errorText = await response.text()
 
-      if (cleanLine) {
-        text += cleanLine + ' '
-      }
+    if (response.status === 401) {
+      throw new Error('API key invalida')
     }
-  } else if (content.includes('<transcript>') || content.includes('<text')) {
-    // Formato TTML/XML
-    const textMatches = content.match(/<text[^>]*>([^<]+)<\/text>/g) ||
-                        content.match(/>([^<]+)</g)
-    if (textMatches) {
-      for (const match of textMatches) {
-        const cleanText = match
-          .replace(/<[^>]+>/g, '')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
-          .replace(/&#39;/g, "'")
-          .replace(/&quot;/g, '"')
-          .trim()
-        if (cleanText && cleanText !== '>') {
-          text += cleanText + ' '
-        }
-      }
+    if (response.status === 404) {
+      throw new Error('Video nao encontrado ou sem transcricao')
     }
-  } else {
-    // Formato JSON (algumas APIs retornam assim)
-    try {
-      const json = JSON.parse(content)
-      if (Array.isArray(json)) {
-        text = json.map(item => item.text || item.content || '').join(' ')
-      } else if (json.text) {
-        text = json.text
-      }
-    } catch {
-      // Se nao for JSON, assume texto puro
-      text = content
+    if (response.status === 429) {
+      throw new Error('Limite de requisicoes atingido')
     }
+
+    throw new Error(`Erro na API: ${response.status} - ${errorText}`)
   }
 
-  // Limpa o texto final
-  return text
+  const data: TranscriptAPIResponse = await response.json()
+
+  // Concatenar todos os segmentos de texto
+  const fullTranscript = data.transcript
+    .map(segment => segment.text)
+    .join(' ')
     .replace(/\s+/g, ' ')
     .replace(/\[.*?\]/g, '') // Remove [Music], [Applause], etc
     .trim()
-}
 
-async function fetchTranscript(videoId: string): Promise<TranscriptResponse> {
-  // 1. Buscar info do video e legendas disponiveis
-  const streamResponse = await fetchWithFallback(`/streams/${videoId}`)
-  const streamData = await streamResponse.json()
-
-  if (!streamData) {
-    throw new Error('Nao foi possivel obter dados do video')
-  }
-
-  const { title, uploader, uploaderUrl, thumbnailUrl, duration, subtitles } = streamData
-
-  // 2. Verificar se tem legendas
-  if (!subtitles || subtitles.length === 0) {
-    throw new Error('Este video nao possui legendas/transcricao disponivel')
-  }
-
-  // 3. Escolher melhor legenda (prioridade: pt > en > auto-generated > qualquer)
-  let selectedSubtitle = subtitles.find((s: any) =>
-    s.code === 'pt' || s.code === 'pt-BR'
-  )
-
-  if (!selectedSubtitle) {
-    selectedSubtitle = subtitles.find((s: any) =>
-      s.code === 'en' || s.code === 'en-US'
-    )
-  }
-
-  if (!selectedSubtitle) {
-    selectedSubtitle = subtitles.find((s: any) => s.autoGenerated)
-  }
-
-  if (!selectedSubtitle) {
-    selectedSubtitle = subtitles[0]
-  }
-
-  // 4. Buscar conteudo da legenda
-  const subtitleUrl = selectedSubtitle.url
-  if (!subtitleUrl) {
-    throw new Error('URL da legenda nao disponivel')
-  }
-
-  const subtitleResponse = await fetch(subtitleUrl)
-  if (!subtitleResponse.ok) {
-    throw new Error('Nao foi possivel baixar a legenda')
-  }
-
-  const subtitleContent = await subtitleResponse.text()
-
-  // 5. Parsear para texto limpo
-  const format = selectedSubtitle.mimeType?.includes('vtt') ? 'vtt' : 'ttml'
-  const transcript = parseSubtitles(subtitleContent, format)
-
-  if (!transcript || transcript.length < 50) {
+  if (!fullTranscript || fullTranscript.length < 50) {
     throw new Error('Transcricao vazia ou muito curta')
   }
 
   return {
     success: true,
-    video_id: videoId,
-    title: title,
-    channel: uploader,
-    thumbnail: thumbnailUrl,
-    transcript: transcript,
-    word_count: transcript.split(/\s+/).length,
-    language: selectedSubtitle.code || 'unknown',
-    duration_seconds: duration,
+    video_id: data.video_id || videoId,
+    title: data.metadata?.title,
+    channel: data.metadata?.author_name,
+    thumbnail: data.metadata?.thumbnail_url,
+    transcript: fullTranscript,
+    word_count: fullTranscript.split(/\s+/).length,
+    language: data.language,
   }
 }
 
@@ -225,9 +133,9 @@ async function fetchMultipleTranscripts(
 
   for (const videoId of videoIds) {
     try {
-      // Pequeno delay para nao sobrecarregar a API
+      // Delay entre requests para respeitar rate limit
       if (results.length > 0 || errors.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 300))
       }
 
       const result = await fetchTranscript(videoId)
