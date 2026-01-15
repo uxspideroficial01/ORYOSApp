@@ -1,0 +1,317 @@
+// supabase/functions/extract-transcript/index.ts
+// Extrai transcricao de video do YouTube usando Piped API (gratis)
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+
+// Instancias Piped disponiveis (fallback se uma cair)
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.in.projectsegfau.lt',
+]
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface TranscriptResponse {
+  success: boolean
+  video_id: string
+  title?: string
+  channel?: string
+  thumbnail?: string
+  transcript: string
+  word_count: number
+  language?: string
+  duration_seconds?: number
+}
+
+// Extrai video ID de diferentes formatos de URL
+function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=)([\w-]{11})/,
+    /(?:youtu\.be\/)([\w-]{11})/,
+    /(?:youtube\.com\/embed\/)([\w-]{11})/,
+    /(?:youtube\.com\/v\/)([\w-]{11})/,
+    /(?:youtube\.com\/shorts\/)([\w-]{11})/,
+    /^([\w-]{11})$/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match) {
+      return match[1]
+    }
+  }
+
+  return null
+}
+
+// Tenta fetch em multiplas instancias Piped
+async function fetchWithFallback(path: string): Promise<Response> {
+  let lastError: Error | null = null
+
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const response = await fetch(`${instance}${path}`, {
+        headers: { 'User-Agent': 'ORYOS/1.0' },
+      })
+
+      if (response.ok) {
+        return response
+      }
+
+      // Se for 404, nao adianta tentar outra instancia
+      if (response.status === 404) {
+        throw new Error('Video nao encontrado')
+      }
+    } catch (error) {
+      lastError = error
+      console.log(`Instancia ${instance} falhou, tentando proxima...`)
+    }
+  }
+
+  throw lastError || new Error('Todas as instancias Piped falharam')
+}
+
+// Parseia legendas VTT/TTML para texto limpo
+function parseSubtitles(content: string, format: string): string {
+  let text = ''
+
+  if (format === 'vtt' || content.includes('WEBVTT')) {
+    // Formato VTT
+    const lines = content.split('\n')
+    for (const line of lines) {
+      // Pula headers, timestamps e linhas vazias
+      if (
+        line.startsWith('WEBVTT') ||
+        line.startsWith('Kind:') ||
+        line.startsWith('Language:') ||
+        line.includes('-->') ||
+        line.match(/^\d+$/) ||
+        line.trim() === ''
+      ) {
+        continue
+      }
+      // Remove tags HTML/VTT
+      const cleanLine = line
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim()
+
+      if (cleanLine) {
+        text += cleanLine + ' '
+      }
+    }
+  } else if (content.includes('<transcript>') || content.includes('<text')) {
+    // Formato TTML/XML
+    const textMatches = content.match(/<text[^>]*>([^<]+)<\/text>/g) ||
+                        content.match(/>([^<]+)</g)
+    if (textMatches) {
+      for (const match of textMatches) {
+        const cleanText = match
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .trim()
+        if (cleanText && cleanText !== '>') {
+          text += cleanText + ' '
+        }
+      }
+    }
+  } else {
+    // Formato JSON (algumas APIs retornam assim)
+    try {
+      const json = JSON.parse(content)
+      if (Array.isArray(json)) {
+        text = json.map(item => item.text || item.content || '').join(' ')
+      } else if (json.text) {
+        text = json.text
+      }
+    } catch {
+      // Se nao for JSON, assume texto puro
+      text = content
+    }
+  }
+
+  // Limpa o texto final
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\[.*?\]/g, '') // Remove [Music], [Applause], etc
+    .trim()
+}
+
+async function fetchTranscript(videoId: string): Promise<TranscriptResponse> {
+  // 1. Buscar info do video e legendas disponiveis
+  const streamResponse = await fetchWithFallback(`/streams/${videoId}`)
+  const streamData = await streamResponse.json()
+
+  if (!streamData) {
+    throw new Error('Nao foi possivel obter dados do video')
+  }
+
+  const { title, uploader, uploaderUrl, thumbnailUrl, duration, subtitles } = streamData
+
+  // 2. Verificar se tem legendas
+  if (!subtitles || subtitles.length === 0) {
+    throw new Error('Este video nao possui legendas/transcricao disponivel')
+  }
+
+  // 3. Escolher melhor legenda (prioridade: pt > en > auto-generated > qualquer)
+  let selectedSubtitle = subtitles.find((s: any) =>
+    s.code === 'pt' || s.code === 'pt-BR'
+  )
+
+  if (!selectedSubtitle) {
+    selectedSubtitle = subtitles.find((s: any) =>
+      s.code === 'en' || s.code === 'en-US'
+    )
+  }
+
+  if (!selectedSubtitle) {
+    selectedSubtitle = subtitles.find((s: any) => s.autoGenerated)
+  }
+
+  if (!selectedSubtitle) {
+    selectedSubtitle = subtitles[0]
+  }
+
+  // 4. Buscar conteudo da legenda
+  const subtitleUrl = selectedSubtitle.url
+  if (!subtitleUrl) {
+    throw new Error('URL da legenda nao disponivel')
+  }
+
+  const subtitleResponse = await fetch(subtitleUrl)
+  if (!subtitleResponse.ok) {
+    throw new Error('Nao foi possivel baixar a legenda')
+  }
+
+  const subtitleContent = await subtitleResponse.text()
+
+  // 5. Parsear para texto limpo
+  const format = selectedSubtitle.mimeType?.includes('vtt') ? 'vtt' : 'ttml'
+  const transcript = parseSubtitles(subtitleContent, format)
+
+  if (!transcript || transcript.length < 50) {
+    throw new Error('Transcricao vazia ou muito curta')
+  }
+
+  return {
+    success: true,
+    video_id: videoId,
+    title: title,
+    channel: uploader,
+    thumbnail: thumbnailUrl,
+    transcript: transcript,
+    word_count: transcript.split(/\s+/).length,
+    language: selectedSubtitle.code || 'unknown',
+    duration_seconds: duration,
+  }
+}
+
+// Processa multiplos videos
+async function fetchMultipleTranscripts(
+  videoIds: string[]
+): Promise<{ results: TranscriptResponse[], errors: { video_id: string, error: string }[] }> {
+  const results: TranscriptResponse[] = []
+  const errors: { video_id: string, error: string }[] = []
+
+  for (const videoId of videoIds) {
+    try {
+      // Pequeno delay para nao sobrecarregar a API
+      if (results.length > 0 || errors.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+
+      const result = await fetchTranscript(videoId)
+      results.push(result)
+    } catch (error) {
+      errors.push({
+        video_id: videoId,
+        error: error.message || 'Erro desconhecido',
+      })
+    }
+  }
+
+  return { results, errors }
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const body = await req.json()
+
+    // Modo single video
+    if (body.video_url || body.video_id) {
+      const input = body.video_url || body.video_id
+      const videoId = extractVideoId(input)
+
+      if (!videoId) {
+        return new Response(
+          JSON.stringify({ error: 'URL ou ID do video invalido' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      const result = await fetchTranscript(videoId)
+
+      return new Response(
+        JSON.stringify(result),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Modo batch
+    if (body.video_urls || body.video_ids) {
+      const inputs: string[] = body.video_urls || body.video_ids
+      const videoIds = inputs
+        .map(input => extractVideoId(input))
+        .filter((id): id is string => id !== null)
+
+      if (videoIds.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'Nenhum video ID valido encontrado' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
+      // Limitar a 10 videos por request
+      const limitedIds = videoIds.slice(0, 10)
+      const { results, errors } = await fetchMultipleTranscripts(limitedIds)
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          total_requested: limitedIds.length,
+          total_success: results.length,
+          total_errors: errors.length,
+          results,
+          errors: errors.length > 0 ? errors : undefined,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    return new Response(
+      JSON.stringify({ error: 'video_url, video_id, video_urls ou video_ids e obrigatorio' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  } catch (error) {
+    console.error('Erro:', error)
+    return new Response(
+      JSON.stringify({ error: error.message || 'Erro interno' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+})
